@@ -13,6 +13,7 @@ Tools:
 """
 
 import os
+import re
 
 from dotenv import load_dotenv
 from groq import Groq
@@ -69,8 +70,50 @@ def search_listings(
 
     Before writing code, fill in the Tool 1 section of planning.md.
     """
-    # Replace this with your implementation
-    return []
+    listings = load_listings()
+
+    # Tokenize the description into lowercase keywords (drop short stop-y bits).
+    keywords = {tok for tok in re.findall(r"[a-z0-9]+", description.lower()) if len(tok) > 1}
+
+    size_query = size.lower().strip() if size else None
+
+    scored: list[tuple[int, dict]] = []
+    for listing in listings:
+        # Filter: price ceiling (inclusive).
+        if max_price is not None and listing.get("price", 0) > max_price:
+            continue
+
+        # Filter: size (case-insensitive substring, so "m" matches "S/M").
+        if size_query:
+            if size_query not in str(listing.get("size", "")).lower():
+                continue
+
+        # Score: keyword overlap against title, description, and style_tags.
+        haystack = " ".join([
+            str(listing.get("title", "")),
+            str(listing.get("description", "")),
+            " ".join(listing.get("style_tags", [])),
+        ]).lower()
+        haystack_tokens = set(re.findall(r"[a-z0-9]+", haystack))
+
+        score = len(keywords & haystack_tokens)
+        if score == 0:
+            continue
+
+        scored.append((score, listing))
+
+    # Sort by relevance (highest score first), then cap at the top 3.
+    scored.sort(key=lambda pair: pair[0], reverse=True)
+
+    return [
+        {
+            "title": listing["title"],
+            "price": listing["price"],
+            "platform": listing["platform"],
+            "condition": listing["condition"],
+        }
+        for _, listing in scored[:3]
+    ]
 
 
 # ── Tool 2: suggest_outfit ────────────────────────────────────────────────────

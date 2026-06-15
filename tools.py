@@ -143,8 +143,75 @@ def suggest_outfit(new_item: dict, wardrobe: dict) -> str:
 
     Before writing code, fill in the Tool 2 section of planning.md.
     """
-    # Replace this with your implementation
-    return ""
+    client = _get_groq_client()
+
+    item_name = new_item.get("title") or new_item.get("name") or "the new item"
+
+    items = wardrobe.get("items", []) if wardrobe else []
+
+    # Empty-wardrobe path: no owned pieces to name, so give general styling
+    # advice instead of inventing items the user does not own.
+    if not items:
+        prompt = (
+            f"A shopper is considering buying this thrifted item:\n"
+            f"  {item_name}\n\n"
+            f"They have NOT entered any wardrobe items yet, so you do not know "
+            f"what they own. Do NOT invent or name specific pieces as if they "
+            f"owned them. Instead give general styling advice: what kinds of "
+            f"items would pair well with this piece, what vibe it suits, and "
+            f"2-3 outfit directions they could build. Keep it to a short "
+            f"paragraph."
+        )
+    else:
+        # Format the owned pieces so the LLM can name real items.
+        lines = []
+        for it in items:
+            parts = [it.get("name", "unnamed")]
+            cat = it.get("category")
+            if cat:
+                parts.append(f"({cat})")
+            colors = it.get("colors") or []
+            if colors:
+                parts.append("colors: " + ", ".join(colors))
+            tags = it.get("style_tags") or []
+            if tags:
+                parts.append("style: " + ", ".join(tags))
+            notes = it.get("notes")
+            if notes:
+                parts.append(f"note: {notes}")
+            lines.append("  - " + " | ".join(parts))
+        wardrobe_text = "\n".join(lines)
+
+        prompt = (
+            f"A shopper is considering buying this thrifted item:\n"
+            f"  {item_name}\n\n"
+            f"Here is their current wardrobe — these are the ONLY pieces they "
+            f"own. Style the new item using ONLY items from this list. Name the "
+            f"specific pieces you use. Do NOT invent items that are not listed.\n\n"
+            f"{wardrobe_text}\n\n"
+            f"Suggest 1-2 complete outfits that pair the new item with named "
+            f"pieces from the wardrobe above. Mention which specific wardrobe "
+            f"items to wear and briefly how to style them (tuck, layer, etc.). "
+            f"Keep it to a short paragraph."
+        )
+
+    response = client.chat.completions.create(
+        model="llama-3.3-70b-versatile",
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "You are a personal stylist. You only style outfits using "
+                    "pieces the user actually owns. You never fabricate items "
+                    "that are not given to you."
+                ),
+            },
+            {"role": "user", "content": prompt},
+        ],
+        temperature=0.7,
+    )
+
+    return response.choices[0].message.content.strip()
 
 
 # ── Tool 3: create_fit_card ───────────────────────────────────────────────────

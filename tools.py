@@ -243,5 +243,59 @@ def create_fit_card(outfit: str, new_item: dict) -> str:
 
     Before writing code, fill in the Tool 3 section of planning.md.
     """
-    # Replace this with your implementation
-    return ""
+    # Guard: an empty or whitespace-only outfit means there is nothing to
+    # caption, so return an error string rather than calling the LLM or raising.
+    if not outfit or not outfit.strip():
+        return (
+            "Can't write a fit card yet — the outfit details are missing. "
+            "Style an outfit first, then try again."
+        )
+
+    client = _get_groq_client()
+
+    item_name = new_item.get("title") or new_item.get("name") or "the find"
+    price = new_item.get("price")
+    platform = new_item.get("platform")
+
+    # Surface the item facts the caption can weave in (name, price, platform).
+    detail_lines = [f"  - item: {item_name}"]
+    if price is not None:
+        detail_lines.append(f"  - price: ${price}")
+    if platform:
+        detail_lines.append(f"  - platform: {platform}")
+    item_details = "\n".join(detail_lines)
+
+    prompt = (
+        f"Here's a thrifted find and how it's being styled:\n\n"
+        f"{item_details}\n\n"
+        f"Outfit:\n{outfit.strip()}\n\n"
+        f"Write a 1-2 line caption for an Instagram/TikTok OOTD post about "
+        f"scoring this piece. Sound like a real person hyping their thrift "
+        f"find — casual, specific, a little excited. Work in the item, the "
+        f"price, and where it came from naturally (once each). Capture the "
+        f"actual vibe of the outfit in concrete terms. An emoji or two is "
+        f"fine.\n\n"
+        f"Do NOT write a product/listing description (no 'features', "
+        f"'condition: excellent', spec-sheet phrasing). Just the caption text "
+        f"— no quotation marks, no 'Caption:' label."
+    )
+
+    response = client.chat.completions.create(
+        model="llama-3.3-70b-versatile",
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "You write short, shareable outfit captions for thrift "
+                    "finds — the kind a real person posts, not a marketplace "
+                    "listing. Keep it casual and authentic, and never sound "
+                    "like a product description."
+                ),
+            },
+            {"role": "user", "content": prompt},
+        ],
+        # High temperature so the same outfit yields a fresh caption each call.
+        temperature=1.1,
+    )
+
+    return response.choices[0].message.content.strip()

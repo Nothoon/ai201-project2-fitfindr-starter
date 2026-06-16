@@ -18,7 +18,80 @@ Usage (once implemented):
     print(result["error"])   # None on success
 """
 
-from tools import search_listings, suggest_outfit, create_fit_card
+import json
+
+from tools import (
+    _get_groq_client,
+    search_listings,
+    suggest_outfit,
+    create_fit_card,
+)
+
+
+# ── query parsing ─────────────────────────────────────────────────────────────
+
+def _parse_query(query: str) -> dict:
+    """
+    Ask the LLM to parse a natural language query into the structured search
+    params the downstream tools need: description, size, max_price.
+
+    Returns a dict with keys:
+        description (str): the item the user is searching for
+        size (str | None): requested size, or None if not stated
+        max_price (float | None): budget ceiling, or None if not stated
+
+    The LLM is forced into JSON mode so the result is easy to access. If parsing
+    fails for any reason, falls back to using the raw query as the description
+    so search_listings still gets something to work with.
+    """
+    client = _get_groq_client()
+
+    prompt = (
+        f"Extract structured shopping constraints from this request:\n\n"
+        f'  "{query}"\n\n'
+        f"Return ONLY a JSON object with exactly these keys:\n"
+        f'  "description": a short keyword phrase of the item (string, required)\n'
+        f'  "size": the requested size like "M" or "XL" (string, or null if not stated)\n'
+        f'  "max_price": the budget ceiling as a number (or null if not stated)\n\n'
+        f'Example: {{"description": "vintage graphic tee", "size": "M", "max_price": 30}}'
+    )
+
+    response = client.chat.completions.create(
+        model="llama-3.3-70b-versatile",
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "You parse shopping requests into JSON. You only output a "
+                    "single valid JSON object, no prose."
+                ),
+            },
+            {"role": "user", "content": prompt},
+        ],
+        temperature=0.0,
+        response_format={"type": "json_object"},
+    )
+
+    raw = response.choices[0].message.content.strip()
+
+    try:
+        data = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        # LLM returned something unparseable — fall back to the raw query.
+        return {"description": query, "size": None, "max_price": None}
+
+    description = data.get("description") or query
+
+    size = data.get("size")
+    size = str(size).strip() if size else None
+
+    max_price = data.get("max_price")
+    try:
+        max_price = float(max_price) if max_price is not None else None
+    except (TypeError, ValueError):
+        max_price = None
+
+    return {"description": description, "size": size, "max_price": max_price}
 
 
 # ── session state ─────────────────────────────────────────────────────────────
@@ -66,7 +139,7 @@ def run_agent(query: str, wardrobe: dict) -> dict:
     TODO — implement this function using the planning loop you designed in planning.md:
 
         Step 1: Initialize the session with _new_session().
-
+run
         Step 2: Parse the user's query to extract a description, size, and
                 max_price. You can use regex, string splitting, or ask the LLM
                 to parse it — document your choice in planning.md.
@@ -92,9 +165,44 @@ def run_agent(query: str, wardrobe: dict) -> dict:
     Before writing code, complete the Planning Loop and State Management sections
     of planning.md — your implementation should match what you described there.
     """
-    # TODO: implement the planning loop
+    # Step 1: fresh session — single source of truth for this interaction.
     session = _new_session(query, wardrobe)
-    session["error"] = "Planning loop not yet implemented."
+
+    # Step 2: parse the query into structured params via the LLM.
+    session["parsed"] = _parse_query(query)
+    description = session["parsed"]["description"]
+    size = session["parsed"]["size"]
+    max_price = session["parsed"]["max_price"]
+
+    # Step 3: search listings. Empty results short-circuit out (right rail).
+    session["search_results"] = search_listings(description, size, max_price)
+    if not session["search_results"]:
+        session["error"] = (
+            "No listings found for that search. Try a broader description, "
+            "a different size, or a higher max price."
+        )
+        return session
+
+    # Step 4: select the top result to style.
+    session["selected_item"] = session["search_results"][0]
+
+    # Step 5: suggest an outfit pairing the selected item with the wardrobe.
+    session["outfit_suggestion"] = suggest_outfit(
+        session["selected_item"], wardrobe
+    )
+    if not session["outfit_suggestion"] or not session["outfit_suggestion"].strip():
+        session["error"] = (
+            "Found an item but couldn't build an outfit. Add more wardrobe "
+            "pieces you own (bottoms, shoes, jackets) and try again."
+        )
+        return session
+
+    # Step 6: turn the outfit into a shareable fit card caption.
+    session["fit_card"] = create_fit_card(
+        session["outfit_suggestion"], session["selected_item"]
+    )
+
+    # Step 7: done — return the completed session.
     return session
 
 

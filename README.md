@@ -154,4 +154,4 @@ That empty list propagates up: `run_agent` sets `session["error"]`, and end-to-e
 
 ## Demo
 
-_3–5 minute walkthrough: a full happy-path interaction across all three tools (narrating how `selected_item` flows into `suggest_outfit` and the outfit flows into `create_fit_card`), plus the `"designer ballgown size XXS under $5"` no-results case showing the graceful error.
+[Watch the demo video](./demo.mkv)
